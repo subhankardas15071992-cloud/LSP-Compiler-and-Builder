@@ -33,13 +33,13 @@ jobs:
         run: git clone --depth 1 --branch ${UPSTREAM_BRANCH} ${UPSTREAM_REPO} .
       - name: Configure project
         run: make config STRICT=1 VERBOSE=1 FEATURES='clap lv2 vst2 vst3 ui'
+      - name: Fetch project dependencies
+        run: make fetch
       - name: Statically link winpthread
         run: |
           # Add -Wl,-Bstatic -lpthread -Wl,-Bdynamic to eliminate libwinpthread-1.dll dependency
           sed -i 's/^NOARCH_SO_FLAGS\s*=/NOARCH_SO_FLAGS = -Wl,-Bstatic -lpthread -Wl,-Bdynamic/' modules/lsp-plugin-fw/make/tools.mk
           sed -i 's/^NOARCH_EXE_FLAGS\s*=/NOARCH_EXE_FLAGS = -Wl,-Bstatic -lpthread -Wl,-Bdynamic/' modules/lsp-plugin-fw/make/tools.mk
-      - name: Fetch project dependencies
-        run: make fetch
       - name: Build project
         run: make VERBOSE=1
       - name: Install plugin bundles
