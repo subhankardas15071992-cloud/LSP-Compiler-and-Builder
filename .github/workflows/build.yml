@@ -1,0 +1,72 @@
+name: Build on various Operating Systems
+
+on:
+  push:
+    branches: [devel, master]
+  pull_request:
+    branches: [devel, master]
+
+env:
+  UPSTREAM_REPO: https://github.com/lsp-plugins/lsp-plugins.git
+  UPSTREAM_BRANCH: master
+  CARLA_BRIDGE_DUMMY: 1
+  CARLA_BRIDGE_TESTING: native
+  PLUGIN_METADATA: .build/target/lsp-plugin-fw/plugins.json
+  VALGRIND_ARGS: --error-exitcode=255 --leak-check=no --track-origins=yes --suppressions=.github/workflows/valgrind.supp
+  VALGRIND_DEBUG_ARGS: --error-exitcode=255 --leak-check=full --track-origins=yes --keep-debuginfo=yes --suppressions=.github/workflows/valgrind.supp
+
+jobs:
+  windows_x86_64:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Setup MSYS2 and install dependencies
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          release: false
+          update: false
+          install: >-
+            base-devel
+            git
+            mingw-w64-x86_64-gcc
+      - name: Clone upstream repository
+        run: git clone --depth 1 --branch ${UPSTREAM_BRANCH} ${UPSTREAM_REPO} .
+      - name: Configure project
+        run: make config STRICT=1 VERBOSE=1 FEATURES='clap lv2 vst2 vst3 ui'
+      - name: Fetch project dependencies
+        run: make fetch
+      - name: Build project
+        run: make VERBOSE=1
+      - name: Upload Windows x86_64 build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lsp-plugins-windows-x86_64
+          path: .build/target/lsp-plugin-fw/
+          if-no-files-found: error
+          retention-days: 30
+
+  macos_arm64:
+    runs-on: macos-latest
+    steps:
+      - name: Update repositories
+        run: brew update
+      - name: Install dependencies
+        run: brew install make pkgconf cairo freetype
+      - name: Clone upstream repository
+        run: git clone --depth 1 --branch ${UPSTREAM_BRANCH} ${UPSTREAM_REPO} .
+      - name: Configure project
+        run: gmake config STRICT=1 VERBOSE=1 FEATURES='lv2 ui'
+      - name: Fetch project dependencies
+        run: gmake fetch
+      - name: Build project
+        run: gmake VERBOSE=1
+      - name: Upload macOS arm64 build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lsp-plugins-macos-arm64
+          path: .build/target/lsp-plugin-fw/
+          if-no-files-found: error
+          retention-days: 30
