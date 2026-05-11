@@ -37,11 +37,13 @@ jobs:
         run: make fetch
       - name: Build project
         run: make VERBOSE=1
+      - name: Install plugin bundles
+        run: make install
       - name: Upload Windows x86_64 build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: lsp-plugins-windows-x86_64
-          path: .build/target/lsp-plugin-fw/
+          path: INSTALL/
           if-no-files-found: error
           retention-days: 30
 
@@ -60,10 +62,12 @@ jobs:
         run: gmake fetch
       - name: Build project
         run: gmake VERBOSE=1
+      - name: Install plugin bundles
+        run: gmake install PREFIX=$PWD/INSTALL
       - name: Upload macOS arm64 build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: lsp-plugins-macos-arm64
-          path: .build/target/lsp-plugin-fw/
+          path: INSTALL/
           if-no-files-found: error
           retention-days: 30
