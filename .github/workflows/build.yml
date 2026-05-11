@@ -29,7 +29,6 @@ jobs:
             base-devel
             git
             mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-winpthreads-static
       - name: Clone upstream repository
         run: git clone --depth 1 --branch ${UPSTREAM_BRANCH} ${UPSTREAM_REPO} .
       - name: Configure project
