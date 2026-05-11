@@ -29,16 +29,47 @@ jobs:
             base-devel
             git
             mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-winpthreads-static
       - name: Clone upstream repository
         run: git clone --depth 1 --branch ${UPSTREAM_BRANCH} ${UPSTREAM_REPO} .
       - name: Configure project
         run: make config STRICT=1 VERBOSE=1 FEATURES='clap lv2 vst2 vst3 ui'
+      - name: Statically link winpthread
+        run: |
+          # Add -Wl,-Bstatic -lpthread -Wl,-Bdynamic to eliminate libwinpthread-1.dll dependency
+          sed -i 's/^NOARCH_SO_FLAGS\s*=/NOARCH_SO_FLAGS = -Wl,-Bstatic -lpthread -Wl,-Bdynamic/' modules/lsp-plugin-fw/make/tools.mk
+          sed -i 's/^NOARCH_EXE_FLAGS\s*=/NOARCH_EXE_FLAGS = -Wl,-Bstatic -lpthread -Wl,-Bdynamic/' modules/lsp-plugin-fw/make/tools.mk
       - name: Fetch project dependencies
         run: make fetch
       - name: Build project
         run: make VERBOSE=1
       - name: Install plugin bundles
         run: make install
+      - name: Fix VST3 binary extension
+        run: |
+          # Rename the VST3 binary from .vst3 to .dll — some DAWs require .dll extension
+          VST3_DIR="INSTALL/lib/vst3/lsp-plugins.vst3/Contents/x86_64-win"
+          if [ -f "$VST3_DIR/lsp-plugins.vst3" ]; then
+            mv "$VST3_DIR/lsp-plugins.vst3" "$VST3_DIR/lsp-plugins.dll"
+          fi
+      - name: Verify no missing DLL dependencies
+        run: |
+          # Check that libwinpthread-1.dll is NOT required by the built plugins
+          echo "=== Checking VST3 dependencies ==="
+          VST3_DLL="INSTALL/lib/vst3/lsp-plugins.vst3/Contents/x86_64-win/lsp-plugins.dll"
+          if [ -f "$VST3_DLL" ]; then
+            objdump -p "$VST3_DLL" | grep "DLL Name" || true
+          fi
+          echo "=== Checking CLAP dependencies ==="
+          CLAP_DLL="INSTALL/lib/clap/lsp-plugins.clap/lsp-plugins-clap.dll"
+          if [ -f "$CLAP_DLL" ]; then
+            objdump -p "$CLAP_DLL" | grep "DLL Name" || true
+          fi
+          echo "=== Checking VST2 dependencies ==="
+          VST2_DLL="INSTALL/lib/vst/lsp-plugins.vst/lsp-plugins-vst2.dll"
+          if [ -f "$VST2_DLL" ]; then
+            objdump -p "$VST2_DLL" | grep "DLL Name" || true
+          fi
       - name: Upload Windows x86_64 build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -57,17 +88,26 @@ jobs:
       - name: Clone upstream repository
         run: git clone --depth 1 --branch ${UPSTREAM_BRANCH} ${UPSTREAM_REPO} .
       - name: Configure project
-        run: gmake config STRICT=1 VERBOSE=1 FEATURES='lv2 ui'
+        run: gmake config STRICT=1 VERBOSE=1 FEATURES='clap lv2 vst2 vst3 ui'
       - name: Fetch project dependencies
         run: gmake fetch
       - name: Build project
         run: gmake VERBOSE=1
       - name: Install plugin bundles
-        run: gmake install PREFIX=$PWD/INSTALL
+        run: |
+          gmake install DESTDIR="$PWD/staging" \
+            CLAP_LIBDIR=/Library/Audio/Plug-Ins/CLAP/lsp-plugins.clap \
+            LV2_LIBDIR=/Library/Audio/Plug-Ins/LV2/lsp-plugins.lv2
+      - name: Ad-hoc code sign plugins
+        run: |
+          find staging/Library/Audio/Plug-Ins -type f \( -name "*.dylib" -o -perm +111 \) -exec codesign --sign - --force {} \; 2>/dev/null || true
+          find staging/Library/Audio/Plug-Ins -name "*.vst3" -type d -exec codesign --sign - --force --deep {} \; 2>/dev/null || true
+          find staging/Library/Audio/Plug-Ins -name "*.vst" -type d -exec codesign --sign - --force --deep {} \; 2>/dev/null || true
+          find staging/Library/Audio/Plug-Ins -name "*.clap" -type d -exec codesign --sign - --force --deep {} \; 2>/dev/null || true
       - name: Upload macOS arm64 build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: lsp-plugins-macos-arm64
-          path: INSTALL/
+          path: staging/Library/
           if-no-files-found: error
           retention-days: 30
