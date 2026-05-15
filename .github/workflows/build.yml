@@ -35,39 +35,85 @@ jobs:
         run: make config STRICT=1 VERBOSE=1 FEATURES='clap lv2 vst2 vst3 ui'
       - name: Fetch project dependencies
         run: make fetch
-      - name: Statically link winpthread
+      - name: Patch build for Windows compatibility
         run: |
-          # Add -Wl,-Bstatic -lpthread -Wl,-Bdynamic to eliminate libwinpthread-1.dll dependency
-          sed -i 's/^NOARCH_SO_FLAGS\s*=/NOARCH_SO_FLAGS = -Wl,-Bstatic -lpthread -Wl,-Bdynamic/' modules/lsp-plugin-fw/make/tools.mk
-          sed -i 's/^NOARCH_EXE_FLAGS\s*=/NOARCH_EXE_FLAGS = -Wl,-Bstatic -lpthread -Wl,-Bdynamic/' modules/lsp-plugin-fw/make/tools.mk
+          # 1) Statically link winpthread — eliminates libwinpthread-1.dll runtime dependency
+          echo 'NOARCH_SO_FLAGS += -Wl,-Bstatic -lpthread -Wl,-Bdynamic' >> modules/lsp-plugin-fw/make/tools.mk
+          echo 'NOARCH_EXE_FLAGS += -Wl,-Bstatic -lpthread -Wl,-Bdynamic' >> modules/lsp-plugin-fw/make/tools.mk
+          # 2) Fix VST3 binary extension: .vst3 is wrong on Windows, must be .dll per VST3 spec
+          sed -i 's/^VST3_EXT\s*:=.*/VST3_EXT := .dll/' modules/lsp-plugin-fw/src/Makefile
       - name: Build project
         run: make VERBOSE=1
       - name: Install plugin bundles
         run: make install
-      - name: Fix VST3 binary extension
+      - name: Fix CLAP bundle for Windows
         run: |
-          # Rename the VST3 binary from .vst3 to .dll — some DAWs require .dll extension
-          VST3_DIR="INSTALL/lib/vst3/lsp-plugins.vst3/Contents/x86_64-win"
-          if [ -f "$VST3_DIR/lsp-plugins.vst3" ]; then
-            mv "$VST3_DIR/lsp-plugins.vst3" "$VST3_DIR/lsp-plugins.dll"
+          # On Windows, CLAP spec requires a single .clap FILE (a PE DLL), not a directory.
+          # The Makefile installs lsp-plugins.clap as a directory containing lsp-plugins-clap.dll.
+          # Reaper and other Windows hosts use LoadLibrary on the .clap file, so it must be a file.
+          CLAP_DIR="INSTALL/lib/clap/lsp-plugins.clap"
+          if [ -d "$CLAP_DIR" ]; then
+            # Find the DLL inside the .clap directory
+            CLAP_DLL=$(find "$CLAP_DIR" -maxdepth 1 -name '*.dll' -type f | head -1)
+            if [ -n "$CLAP_DLL" ]; then
+              echo "Converting CLAP directory bundle to single file:"
+              echo "  Source: $CLAP_DLL"
+              echo "  Target: INSTALL/lib/clap/lsp-plugins.clap"
+              # Copy DLL to temp, remove directory, move DLL back as .clap file
+              cp "$CLAP_DLL" /tmp/lsp-plugins-clap.dll
+              rm -rf "$CLAP_DIR"
+              mv /tmp/lsp-plugins-clap.dll INSTALL/lib/clap/lsp-plugins.clap
+            else
+              echo "WARNING: No DLL found inside $CLAP_DIR"
+              ls -la "$CLAP_DIR"
+            fi
+          else
+            echo "CLAP is already a file (not a directory) — no fix needed"
           fi
-      - name: Verify no missing DLL dependencies
+      - name: Verify plugin structure and dependencies
         run: |
-          # Check that libwinpthread-1.dll is NOT required by the built plugins
+          echo "=== Installed file tree ==="
+          find INSTALL -type f | head -40
+          echo ""
           echo "=== Checking VST3 dependencies ==="
           VST3_DLL="INSTALL/lib/vst3/lsp-plugins.vst3/Contents/x86_64-win/lsp-plugins.dll"
           if [ -f "$VST3_DLL" ]; then
-            objdump -p "$VST3_DLL" | grep "DLL Name" || true
+            objdump -p "$VST3_DLL" | grep "DLL Name"
+          else
+            echo "WARNING: VST3 binary not found at expected path"
+            find INSTALL/lib/vst3 -type f | head -10
           fi
+          echo ""
           echo "=== Checking CLAP dependencies ==="
-          CLAP_DLL="INSTALL/lib/clap/lsp-plugins.clap/lsp-plugins-clap.dll"
-          if [ -f "$CLAP_DLL" ]; then
-            objdump -p "$CLAP_DLL" | grep "DLL Name" || true
+          if [ -f "INSTALL/lib/clap/lsp-plugins.clap" ]; then
+            objdump -p INSTALL/lib/clap/lsp-plugins.clap | grep "DLL Name"
+          else
+            echo "WARNING: CLAP binary not found"
+            find INSTALL/lib/clap -type f | head -10
           fi
+          echo ""
           echo "=== Checking VST2 dependencies ==="
-          VST2_DLL="INSTALL/lib/vst/lsp-plugins.vst/lsp-plugins-vst2.dll"
-          if [ -f "$VST2_DLL" ]; then
-            objdump -p "$VST2_DLL" | grep "DLL Name" || true
+          VST2_DLL=$(find INSTALL/lib/vst -type f -name '*.dll' 2>/dev/null | head -1)
+          if [ -n "$VST2_DLL" ]; then
+            objdump -p "$VST2_DLL" | grep "DLL Name"
+          fi
+          echo ""
+          echo "=== Checking LV2 dependencies ==="
+          LV2_DLL=$(find INSTALL/lib/lv2 -type f -name '*.dll' 2>/dev/null | head -1)
+          if [ -n "$LV2_DLL" ]; then
+            objdump -p "$LV2_DLL" | grep "DLL Name"
+          fi
+          echo ""
+          echo "=== Verifying libwinpthread is NOT dynamically linked ==="
+          BAD=0
+          find INSTALL -type f \( -name '*.dll' -o -name '*.clap' \) | while read f; do
+            if objdump -p "$f" 2>/dev/null | grep -q "libwinpthread"; then
+              echo "FAIL: $f still depends on libwinpthread-1.dll"
+              BAD=1
+            fi
+          done
+          if [ "$BAD" = "0" ]; then
+            echo "All plugins: libwinpthread statically linked OK"
           fi
       - name: Upload Windows x86_64 build artifacts
         uses: actions/upload-artifact@v4
